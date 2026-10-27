@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SecureStudent — Web Security Lab</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>SecureStudent</h1>
+      <p>Web Server Security — Local Academic Lab</p>
+    </div>
+    <button id="logoutBtn" class="secondary hidden">Logout</button>
+  </header>
+
+  <main>
+    <section id="loginPanel" class="panel">
+      <h2>SQL Injection — Login Demo</h2>
+      <p>Use the two buttons to compare the deliberately vulnerable and secured implementations.</p>
+      <label>Username<input id="username" value="student"></label>
+      <label>Password<input id="password" type="password" value="student123"></label>
+      <div class="row">
+        <button onclick="sqlLogin('vulnerable')">Vulnerable Login</button>
+        <button onclick="sqlLogin('secured')">Secured Login</button>
+      </div>
+      <div id="loginResult" class="result"></div>
+      <p class="hint">Demo credentials: <b>student / student123</b></p>
+    </section>
+
+    <section id="appPanel" class="hidden">
+      <div class="welcome panel">
+        <h2 id="welcome"></h2>
+        <p>Choose a security module.</p>
+      </div>
+
+      <div class="grid">
+        <article class="card">
+          <h3>SQL Injection</h3>
+          <p>Authentication-bypass demonstration.</p>
+          <button onclick="show('sqli')">Open</button>
+        </article>
+        <article class="card">
+          <h3>OS Command Injection</h3>
+          <p>In-band command-output demonstration.</p>
+          <button onclick="show('command')">Open</button>
+        </article>
+        <article class="card">
+          <h3>Stored XSS</h3>
+          <p>Stored comment rendering demonstration.</p>
+          <button onclick="show('xss')">Open</button>
+        </article>
+        <article class="card">
+          <h3>POST CSRF</h3>
+          <p>Forged state-changing request demonstration.</p>
+          <button onclick="show('csrf')">Open</button>
+        </article>
+      </div>
+
+      <section id="sqli" class="module panel hidden">
+        <h2>SQL Injection</h2>
+        <p>Try the vulnerable and secured login endpoints separately. For your video, use a lab-safe authentication-bypass payload you have tested locally.</p>
+        <p class="code-note">Vulnerable path: input is concatenated into SQL. Secured path: parameterized query.</p>
+      </section>
+
+      <section id="command" class="module panel hidden">
+        <h2>OS Command Injection</h2>
+        <p>Enter a hostname-like value. The vulnerable endpoint demonstrates shell-string construction; the secured endpoint applies an allow-list and avoids shell interpretation.</p>
+        <label>Hostname<input id="host" value="example.com"></label>
+        <div class="row">
+          <button onclick="runCommand('vulnerable')">Run Vulnerable</button>
+          <button onclick="runCommand('secured')">Run Secured</button>
+        </div>
+        <pre id="commandResult"></pre>
+      </section>
+
+      <section id="xss" class="module panel hidden">
+        <h2>Stored XSS</h2>
+        <p>Post a comment, then view it in vulnerable or secured rendering mode.</p>
+        <label>Comment<textarea id="comment" rows="4" placeholder="Enter a comment"></textarea></label>
+        <div class="row">
+          <button onclick="postComment()">Store Comment</button>
+          <button onclick="loadComments('vulnerable')">View Vulnerable</button>
+          <button onclick="loadComments('secured')">View Secured</button>
+        </div>
+        <div id="comments"></div>
+      </section>
+
+      <section id="csrf" class="module panel hidden">
+        <h2>POST CSRF</h2>
+        <p>This changes the logged-in user's email. The vulnerable route has no CSRF verification; the secured route requires a session-bound token.</p>
+        <p>Current email: <b id="currentEmail"></b></p>
+        <label>New email<input id="email" value="new@example.com"></label>
+        <div class="row">
+          <button onclick="updateEmail('vulnerable')">Vulnerable Update</button>
+          <button onclick="updateEmail('secured')">Secured Update</button>
+        </div>
+        <div id="csrfResult" class="result"></div>
+      </section>
+    </section>
+  </main>
+
+<script>
+async function api(url, options={}) {
+  const r = await fetch(url, { headers: {"Content-Type":"application/json"}, ...options });
+  const data = await r.json().catch(() => ({message:"Unexpected response"}));
+  return {r, data};
+}
+
+function show(id) {
+  document.querySelectorAll(".module").forEach(x => x.classList.add("hidden"));
+  document.getElementById(id).classList.remove("hidden");
+  if (id === "csrf") loadProfile();
+}
+
+async function sqlLogin(mode) {
+  const username = document.getElementById("username").value;
+  const password = document.getElementById("password").value;
+  const endpoint = mode === "vulnerable"
+    ? "/api/sqli/vulnerable-login"
+    : "/api/sqli/secured-login";
+  const {r, data} = await api(endpoint, {
+    method: "POST",
+    body: JSON.stringify({username, password})
+  });
+  document.getElementById("loginResult").textContent = data.message || "";
+  if (r.ok) {
+    document.getElementById("loginPanel").classList.add("hidden");
+    document.getElementById("appPanel").classList.remove("hidden");
+    document.getElementById("logoutBtn").classList.remove("hidden");
+    document.getElementById("welcome").textContent = `Welcome, ${data.user.name}`;
+  }
+}
+
+async function runCommand(mode) {
+  const host = document.getElementById("host").value;
+  const endpoint = mode === "vulnerable"
+    ? "/api/command/vulnerable"
+    : "/api/command/secured";
+  const {data} = await api(endpoint, {
+    method: "POST",
+    body: JSON.stringify({host})
+  });
+  document.getElementById("commandResult").textContent =
+    data.output || data.message || "No output";
+}
+
+async function postComment() {
+  const body = document.getElementById("comment").value;
+  await api("/api/xss/" + "vulnerable/comments", {
+    method: "POST", body: JSON.stringify({body})
+  });
+  document.getElementById("comment").value = "";
+  await loadComments("vulnerable");
+}
+
+async function loadComments(mode) {
+  const {data} = await api("/api/xss/comments?mode=" + mode);
+  const box = document.getElementById("comments");
+  box.innerHTML = "";
+  data.comments.forEach(c => {
+    const div = document.createElement("div");
+    div.className = "comment";
+    if (mode === "secured") {
+      div.innerHTML = `<b>${escapeClient(c.username)}</b><p>${c.body}</p>`;
+    } else {
+      // Intentionally unsafe rendering for the Stored-XSS demo.
+      div.innerHTML = `<b>${escapeClient(c.username)}</b><p>${c.body}</p>`;
+    }
+    box.appendChild(div);
+  });
+}
+
+function escapeClient(v) {
+  return String(v).replace(/[&<>"']/g, c => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#039;"
+  }[c]));
+}
+
+async function loadProfile() {
+  const {data} = await api("/api/csrf/profile");
+  document.getElementById("currentEmail").textContent = data.email;
+}
+
+async function updateEmail(mode) {
+  const email = document.getElementById("email").value;
+  let body = {email};
+  if (mode === "secured") {
+    const profile = await api("/api/csrf/profile");
+    body.csrfToken = profile.data.csrfToken;
+  }
+  const endpoint = mode === "vulnerable"
+    ? "/api/csrf/vulnerable/update-email"
+    : "/api/csrf/secured/update-email";
+  const {data} = await api(endpoint, {
+    method: "POST", body: JSON.stringify(body)
+  });
+  document.getElementById("csrfResult").textContent = data.message || "";
+  loadProfile();
+}
+
+document.getElementById("logoutBtn").onclick = async () => {
+  await api("/api/logout", {method:"POST"});
+  location.reload();
+};
+</script>
+</body>
+</html>
